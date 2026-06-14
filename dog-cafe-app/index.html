@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#6B4C3B">
+    <title>댕댕카페 🐾</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+    <!-- ===== API 키 설정 모달 ===== -->
+    <div id="setupModal" class="modal-overlay">
+        <div class="modal-card">
+            <div class="modal-emoji">🐾</div>
+            <h1 class="modal-title">댕댕카페</h1>
+            <p class="modal-subtitle">여자친구, 반려견과 함께<br>근처 애견동반 카페를 찾아보세요</p>
+
+            <div class="setup-section">
+                <p class="setup-label">카카오 JavaScript API 키</p>
+                <input
+                    type="text"
+                    id="kakaoKeyInput"
+                    class="text-input"
+                    placeholder="예) a1b2c3d4e5f6..."
+                    autocomplete="off"
+                    spellcheck="false"
+                >
+                <a href="https://developers.kakao.com" class="hint-link" target="_blank" rel="noopener">
+                    🔑 developers.kakao.com → 내 애플리케이션 → 앱 키
+                </a>
+            </div>
+
+            <button class="btn-primary" id="startBtn">🗺️ 지도 시작하기</button>
+            <p class="modal-note">키는 브라우저(localStorage)에만 저장되며 서버로 전송되지 않습니다.</p>
+        </div>
+    </div>
+
+    <!-- ===== 헤더 ===== -->
+    <header class="header">
+        <div class="header-left">
+            <span class="logo">🐾 댕댕카페</span>
+        </div>
+        <div class="header-right">
+            <button class="header-btn" id="stampBtn" title="스탬프 여행">🏆</button>
+            <button class="header-btn" id="petBtn"   title="내 반려견">🐕</button>
+        </div>
+    </header>
+
+    <!-- ===== 필터 칩 ===== -->
+    <div class="filter-bar" id="filterBar">
+        <button class="chip active" data-filter="all">🐾 전체</button>
+        <button class="chip" data-filter="indoor">🏠 실내가능</button>
+        <button class="chip" data-filter="small">🐶 소형견</button>
+        <button class="chip" data-filter="large">🐕 대형견</button>
+        <button class="chip" data-filter="terrace">🌿 테라스</button>
+    </div>
+
+    <!-- ===== 지도 ===== -->
+    <div id="map"></div>
+
+    <!-- ===== 도보 반경 슬라이더 ===== -->
+    <div class="radius-card" id="radiusCard">
+        <span class="radius-icon">🦮</span>
+        <span class="radius-text">도보</span>
+        <input type="range" id="radiusSlider" min="5" max="30" value="15" step="5" class="slider">
+        <span class="radius-value" id="radiusDisplay">15분</span>
+    </div>
+
+    <!-- ===== 내 위치 버튼 ===== -->
+    <button class="fab" id="locateBtn" title="내 위치로 이동">📍</button>
+
+    <!-- ===== 바텀 시트 (카페 목록) ===== -->
+    <div class="sheet" id="sheet">
+        <div class="sheet-handle-area" id="sheetHandle">
+            <div class="sheet-handle"></div>
+        </div>
+        <div class="sheet-header">
+            <h2 class="sheet-title" id="sheetTitle">위치를 불러오는 중...</h2>
+            <span class="sheet-badge" id="sheetBadge"></span>
+        </div>
+        <div class="sheet-body" id="sheetBody">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>GPS 위치 확인 중...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 카페 상세 패널 ===== -->
+    <div class="panel" id="detailPanel">
+        <div class="panel-nav">
+            <button class="back-btn" id="detailBackBtn">← 목록</button>
+            <span></span>
+        </div>
+        <div class="panel-body" id="detailBody"></div>
+    </div>
+
+    <!-- ===== 스탬프 패널 ===== -->
+    <div class="panel" id="stampPanel">
+        <div class="panel-nav">
+            <h2>🏆 스탬프 여행</h2>
+            <button class="close-btn" id="stampCloseBtn">✕</button>
+        </div>
+        <div class="panel-body" id="stampBody"></div>
+    </div>
+
+    <!-- ===== 반려견 프로필 패널 ===== -->
+    <div class="panel" id="petPanel">
+        <div class="panel-nav">
+            <h2>🐕 내 반려견</h2>
+            <button class="close-btn" id="petCloseBtn">✕</button>
+        </div>
+        <div class="panel-body" id="petBody"></div>
+    </div>
+
+    <!-- ===== 토스트 ===== -->
+    <div class="toast" id="toast"></div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
