@@ -7,7 +7,7 @@ const CFG = {
     OVERPASS_URL: 'https://overpass-api.de/api/interpreter',
     // ↓ 카카오 개발자 콘솔(developers.kakao.com)에서 발급한 REST API 키를 입력하세요.
     // 앱 설정 → 플랫폼 → 웹 플랫폼 등록 에 https://tnvjflej.github.io 추가 필수.
-    KAKAO_KEY: '',
+    KAKAO_KEY: 'd4558eaaeec6ef9b7c7d48b0e6470342',
 };
 
 /* ===== 실제 카페 데이터 (주소·좌표 직접 입력) ===== */
