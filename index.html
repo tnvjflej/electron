@@ -8,37 +8,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#6B4C3B">
     <title>댕댕카페 🐾</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="app">
-
-    <!-- ===== API 키 설정 모달 ===== -->
-    <div id="setupModal" class="modal-overlay">
-        <div class="modal-card">
-            <div class="modal-emoji">🐾</div>
-            <h1 class="modal-title">댕댕카페</h1>
-            <p class="modal-subtitle">여자친구, 반려견과 함께<br>근처 애견동반 카페를 찾아보세요</p>
-
-            <div class="setup-section">
-                <p class="setup-label">카카오 JavaScript API 키</p>
-                <input
-                    type="text"
-                    id="kakaoKeyInput"
-                    class="text-input"
-                    placeholder="예) a1b2c3d4e5f6..."
-                    autocomplete="off"
-                    spellcheck="false"
-                >
-                <a href="https://developers.kakao.com" class="hint-link" target="_blank" rel="noopener">
-                    🔑 developers.kakao.com → 내 애플리케이션 → 앱 키
-                </a>
-            </div>
-
-            <button class="btn-primary" id="startBtn">🗺️ 지도 시작하기</button>
-            <p class="modal-note">키는 브라우저(localStorage)에만 저장되며 서버로 전송되지 않습니다.</p>
-        </div>
-    </div>
 
     <!-- ===== 헤더 ===== -->
     <header class="header">
@@ -122,6 +96,7 @@
     <div class="toast" id="toast"></div>
 
 </div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
