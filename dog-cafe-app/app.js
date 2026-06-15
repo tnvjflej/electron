@@ -5,6 +5,9 @@ const CFG = {
     DEFAULT_LAT: 37.5665,
     DEFAULT_LNG: 126.9780,
     OVERPASS_URL: 'https://overpass-api.de/api/interpreter',
+    // ↓ 카카오 개발자 콘솔(developers.kakao.com)에서 발급한 REST API 키를 입력하세요.
+    // 앱 설정 → 플랫폼 → 웹 플랫폼 등록 에 https://tnvjflej.github.io 추가 필수.
+    KAKAO_KEY: '',
 };
 
 /* ===== 실제 카페 데이터 (주소·좌표 직접 입력) ===== */
@@ -250,13 +253,31 @@ async function searchCafes() {
     setTitle('🔍 카페 검색 중...');
     setBody('<div class="loading"><div class="spinner"></div><p>주변 카페 탐색 중...</p></div>');
 
-    // 1. 하드코딩된 실제 카페 중 반경 내 필터링
-    const staticHits = REAL_CAFES.filter(c => {
-        const d = haversine(lat, lng, +c.y, +c.x);
-        return d <= radius * 1.5;   // 슬라이더 반경 1.5배까지 허용
-    });
+    if (CFG.KAKAO_KEY) {
+        // ── 카카오 Local API 실시간 검색 ──────────────────────────────────
+        try {
+            const cafes = await Promise.race([
+                fetchKakaoCafes(lat, lng, Math.max(radius * 1.5, 500)),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+            ]);
+            if (!cafes.length) { showNoResult(); return; }
+            EL.sheetBadge.textContent = `도보 ${S.walkMin}분 · 카카오 실시간`;
+            processCafes(cafes);
+        } catch (e) {
+            console.warn('Kakao API 오류:', e.message);
+            toast('카카오 API 오류 — 기본 데이터로 표시해요');
+            await fallbackSearch(lat, lng, radius);
+        }
+    } else {
+        // ── 카카오 키 없음: REAL_CAFES + Overpass 폴백 ───────────────────
+        await fallbackSearch(lat, lng, radius);
+    }
+}
 
-    // 2. Overpass API 실시간 검색 (병렬, 타임아웃 8초)
+/* 카카오 키가 없을 때 사용하는 폴백 (REAL_CAFES + Overpass OSM) */
+async function fallbackSearch(lat, lng, radius) {
+    const staticHits = REAL_CAFES.filter(c => haversine(lat, lng, +c.y, +c.x) <= radius * 1.5);
+
     let osm = [];
     try {
         osm = await Promise.race([
@@ -265,25 +286,52 @@ async function searchCafes() {
         ]);
     } catch (e) { console.warn('Overpass:', e.message); }
 
-    // 3. 실제 카페 + OSM 병합 (이름 기준 중복 제거)
     const seen = new Set(staticHits.map(c => c.place_name));
-    const osmUnique = osm.filter(c => !seen.has(c.place_name));
-    const merged = [...staticHits, ...osmUnique];
+    const merged = [...staticHits, ...osm.filter(c => !seen.has(c.place_name))];
 
-    if (merged.length === 0) {
-        setTitle('근처 카페 정보가 없어요');
-        setBody(`<div class="empty-state">
-            <div class="empty-emoji">📍</div>
-            <div class="empty-title">이 위치엔 등록된 카페가 없어요</div>
-            <div class="empty-desc">핀을 이동하거나 반경을 늘려보세요</div>
-        </div>`);
-        EL.sheetBadge.textContent = '';
-        return;
-    }
-
-    const badgeLabel = osm.length > 0 ? `도보 ${S.walkMin}분 · OSM 포함` : `도보 ${S.walkMin}분 이내`;
-    EL.sheetBadge.textContent = badgeLabel;
+    if (!merged.length) { showNoResult(); return; }
+    EL.sheetBadge.textContent = osm.length > 0 ? `도보 ${S.walkMin}분 · OSM 포함` : `도보 ${S.walkMin}분 이내`;
     processCafes(merged);
+}
+
+function showNoResult() {
+    setTitle('근처 카페 정보가 없어요');
+    setBody(`<div class="empty-state">
+        <div class="empty-emoji">📍</div>
+        <div class="empty-title">이 위치엔 등록된 카페가 없어요</div>
+        <div class="empty-desc">핀을 이동하거나 반경을 늘려보세요</div>
+    </div>`);
+    EL.sheetBadge.textContent = '';
+}
+
+/* 카카오 키워드 검색 API — 애견카페/반려견카페/펫카페/도그카페 병렬 검색 후 ID 기준 중복 제거 */
+async function fetchKakaoCafes(lat, lng, radius) {
+    const keywords = ['애견카페', '반려견카페', '펫카페', '도그카페'];
+    const seen    = new Set();
+    const results = [];
+    const r = Math.min(Math.round(radius), 20000); // Kakao 최대 20km
+
+    await Promise.all(keywords.map(async kw => {
+        const url = new URL('https://dapi.kakao.com/v2/local/search/keyword.json');
+        url.searchParams.set('query', kw);
+        url.searchParams.set('x', String(lng));
+        url.searchParams.set('y', String(lat));
+        url.searchParams.set('radius', r);
+        url.searchParams.set('size', 15);
+        url.searchParams.set('sort', 'distance');
+
+        const resp = await fetch(url.toString(), {
+            headers: { Authorization: `KakaoAK ${CFG.KAKAO_KEY}` },
+        });
+        if (!resp.ok) throw new Error(`Kakao HTTP ${resp.status}`);
+        const data = await resp.json();
+        for (const p of (data.documents || [])) {
+            if (!seen.has(p.id)) { seen.add(p.id); results.push(p); }
+        }
+    }));
+
+    // Kakao 응답은 place_name·x·y·road_address_name·phone 형식 — processCafes()와 바로 호환
+    return results;
 }
 
 async function fetchOverpassCafes(lat, lng, radius) {
