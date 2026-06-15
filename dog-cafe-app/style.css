@@ -452,6 +452,12 @@ a { text-decoration: none; }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ===== Leaflet 오버라이드 ===== */
+.leaflet-bottom { bottom: 185px !important; }
+.leaflet-control-attribution { font-size: 10px; opacity: 0.7; }
+.leaflet-pane { z-index: 10 !important; }
+.leaflet-top, .leaflet-bottom { z-index: 90 !important; }
+
 /* ===== 반응형: 태블릿/데스크탑 ===== */
 @media (min-width: 640px) {
     .sheet { left: auto; width: 380px; right: 20px; bottom: 20px; border-radius: var(--r-lg); }

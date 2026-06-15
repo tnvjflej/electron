@@ -2,16 +2,13 @@
 
 /* ===== 설정 ===== */
 const CFG = {
-    WALK_SPEED_MPM: 50,   // 3 km/h ÷ 60 = 50 m/min (반려견 산책 속도)
-    SEARCH_KEYWORD: '애견카페',
-    FALLBACK_CATEGORY: 'CE7',  // 카카오 카페 카테고리
+    WALK_SPEED_MPM: 50,
     DEFAULT_LAT: 37.5665,
     DEFAULT_LNG: 126.9780,
+    OVERPASS_URL: 'https://overpass-api.de/api/interpreter',
 };
 
-/* ===== 데모 반려견 동반 조건 풀
-   실제 서비스에서는 자체 DB(Firestore 등)에서 place_id로 조회합니다.
-===== */
+/* ===== 데모 반려견 동반 조건 풀 ===== */
 const DOG_POOL = [
     { indoor: true,  maxKg: null, kennel: false, lead: true,  tags: ['indoor'] },
     { indoor: false, maxKg: 10,   kennel: false, lead: true,  tags: ['terrace', 'small'] },
@@ -23,15 +20,14 @@ const DOG_POOL = [
 /* ===== 앱 상태 ===== */
 const S = {
     map: null,
-    ps: null,               // Places 서비스
-    userLoc: null,          // { lat, lng }
-    userOverlay: null,
+    userLoc: null,
+    userMarker: null,
     circle: null,
-    overlays: [],           // 마커 역할 CustomOverlay 배열
-    cafes: [],              // 검색 결과 + 동반 조건 병합
+    markers: [],
+    cafes: [],
     activeFilter: 'all',
     walkMin: 15,
-    sheetSnap: 'default',   // default | half | expanded
+    sheetSnap: 'default',
     stamps: JSON.parse(localStorage.getItem('ddg_stamps') || '[]'),
     pet:    JSON.parse(localStorage.getItem('ddg_pet')    || '{"name":"우리 댕댕이","size":"small","breed":"믹스견"}'),
 };
@@ -42,42 +38,40 @@ const EL = {};
 
 /* ===== 초기화 ===== */
 document.addEventListener('DOMContentLoaded', () => {
-    EL.setupModal  = $('setupModal');
-    EL.kakaoInput  = $('kakaoKeyInput');
-    EL.startBtn    = $('startBtn');
-    EL.radiusSlider= $('radiusSlider');
-    EL.radiusDisp  = $('radiusDisplay');
-    EL.sheet       = $('sheet');
-    EL.sheetTitle  = $('sheetTitle');
-    EL.sheetBadge  = $('sheetBadge');
-    EL.sheetBody   = $('sheetBody');
-    EL.toast       = $('toast');
+    EL.radiusSlider = $('radiusSlider');
+    EL.radiusDisp   = $('radiusDisplay');
+    EL.sheet        = $('sheet');
+    EL.sheetTitle   = $('sheetTitle');
+    EL.sheetBadge   = $('sheetBadge');
+    EL.sheetBody    = $('sheetBody');
+    EL.toast        = $('toast');
 
+    initMap();
     wireEvents();
-
-    const savedKey = localStorage.getItem('ddg_kakao_key');
-    if (savedKey) {
-        EL.setupModal.classList.add('hidden');
-        boot(savedKey);
-    }
+    locateUser();
 });
 
-function wireEvents() {
-    // 모달 시작
-    EL.startBtn.addEventListener('click', () => {
-        const key = EL.kakaoInput.value.trim();
-        if (!key) { toast('API 키를 입력해주세요.'); return; }
-        localStorage.setItem('ddg_kakao_key', key);
-        EL.setupModal.classList.add('hidden');
-        boot(key);
+/* ===== 지도 초기화 (Leaflet + OpenStreetMap) ===== */
+function initMap() {
+    S.map = L.map('map', {
+        center: [CFG.DEFAULT_LAT, CFG.DEFAULT_LNG],
+        zoom: 15,
+        zoomControl: false,
     });
-    EL.kakaoInput.addEventListener('keydown', e => { if (e.key === 'Enter') EL.startBtn.click(); });
 
-    // 헤더 버튼
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+    }).addTo(S.map);
+
+    S.map.on('click', () => snapSheet('default'));
+}
+
+/* ===== 이벤트 연결 ===== */
+function wireEvents() {
     $('stampBtn').addEventListener('click', openStampPanel);
     $('petBtn').addEventListener('click', openPetPanel);
 
-    // 필터 칩
     $('filterBar').addEventListener('click', e => {
         const chip = e.target.closest('.chip');
         if (!chip) return;
@@ -87,64 +81,18 @@ function wireEvents() {
         renderList();
     });
 
-    // 슬라이더
     EL.radiusSlider.addEventListener('input', e => {
         S.walkMin = +e.target.value;
         EL.radiusDisp.textContent = `${S.walkMin}분`;
         if (S.userLoc) { updateCircle(); debouncedSearch(); }
     });
 
-    // 내 위치 버튼
     $('locateBtn').addEventListener('click', locateUser);
-
-    // 바텀 시트 드래그
     setupSheetDrag();
 
-    // 패널 닫기
     $('detailBackBtn').addEventListener('click', () => closePanel('detailPanel'));
-    $('stampCloseBtn').addEventListener('click', () => closePanel('stampPanel'));
-    $('petCloseBtn').addEventListener('click', () => closePanel('petPanel'));
-
-    // 지도 클릭 → 시트 최소화
-    // (지도가 로드된 후 kakao 이벤트로 등록)
-}
-
-/* ===== 카카오 SDK 동적 로드 ===== */
-async function boot(apiKey) {
-    try {
-        await loadKakaoSDK(apiKey);
-        initMap();
-        await locateUser();
-    } catch (err) {
-        console.error(err);
-        toast('⚠️ 지도 로드 실패: ' + err.message);
-        localStorage.removeItem('ddg_kakao_key');
-        EL.setupModal.classList.remove('hidden');
-    }
-}
-
-function loadKakaoSDK(key) {
-    return new Promise((resolve, reject) => {
-        const prev = document.querySelector('script[src*="dapi.kakao.com"]');
-        if (prev) prev.remove();
-
-        const s = document.createElement('script');
-        s.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&libraries=services&autoload=false`;
-        s.addEventListener('load',  () => kakao.maps.load(resolve));
-        s.addEventListener('error', () => reject(new Error('API 키가 유효하지 않거나 도메인 설정이 필요합니다.')));
-        document.head.appendChild(s);
-    });
-}
-
-/* ===== 지도 초기화 ===== */
-function initMap() {
-    S.map = new kakao.maps.Map($('map'), {
-        center: new kakao.maps.LatLng(CFG.DEFAULT_LAT, CFG.DEFAULT_LNG),
-        level: 4,
-    });
-    S.ps = new kakao.maps.services.Places();
-
-    kakao.maps.event.addListener(S.map, 'click', () => snapSheet('default'));
+    $('stampCloseBtn').addEventListener('click',  () => closePanel('stampPanel'));
+    $('petCloseBtn').addEventListener('click',    () => closePanel('petPanel'));
 }
 
 /* ===== GPS 위치 ===== */
@@ -153,7 +101,7 @@ function locateUser() {
     EL.sheetBadge.textContent = '';
 
     if (!navigator.geolocation) {
-        setTitle('⚠️ 위치 서비스를 지원하지 않는 브라우저입니다');
+        useDefaultLoc('위치 서비스를 지원하지 않는 브라우저입니다');
         return Promise.resolve();
     }
 
@@ -162,10 +110,8 @@ function locateUser() {
             pos => {
                 const { latitude: lat, longitude: lng } = pos.coords;
                 S.userLoc = { lat, lng };
-                const ll = new kakao.maps.LatLng(lat, lng);
-                S.map.setCenter(ll);
-                S.map.setLevel(4);
-                drawUserDot(ll);
+                S.map.setView([lat, lng], 15);
+                drawUserDot(lat, lng);
                 updateCircle();
                 searchCafes();
                 resolve();
@@ -173,8 +119,8 @@ function locateUser() {
             err => {
                 const msgs = { 1: '위치 권한을 허용해주세요.', 2: '위치를 찾을 수 없습니다.' };
                 const msg = msgs[err.code] || '위치 오류가 발생했습니다.';
-                setTitle('⚠️ ' + msg);
                 toast(msg);
+                useDefaultLoc(msg);
                 resolve();
             },
             { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
@@ -182,26 +128,35 @@ function locateUser() {
     });
 }
 
-function drawUserDot(latlng) {
-    if (S.userOverlay) S.userOverlay.setMap(null);
-    S.userOverlay = new kakao.maps.CustomOverlay({
-        map: S.map, position: latlng,
-        content: '<div style="width:18px;height:18px;border-radius:50%;background:#4285F4;border:3px solid #fff;box-shadow:0 2px 8px rgba(66,133,244,.55);"></div>',
-        yAnchor: 0.5, xAnchor: 0.5, zIndex: 10,
+function useDefaultLoc(msg) {
+    setTitle('⚠️ ' + msg + ' (서울 기준 데모)');
+    S.userLoc = { lat: CFG.DEFAULT_LAT, lng: CFG.DEFAULT_LNG };
+    S.map.setView([CFG.DEFAULT_LAT, CFG.DEFAULT_LNG], 15);
+    drawUserDot(CFG.DEFAULT_LAT, CFG.DEFAULT_LNG);
+    updateCircle();
+    searchCafes();
+}
+
+function drawUserDot(lat, lng) {
+    if (S.userMarker) S.map.removeLayer(S.userMarker);
+    const icon = L.divIcon({
+        html: '<div style="width:18px;height:18px;border-radius:50%;background:#4285F4;border:3px solid #fff;box-shadow:0 2px 8px rgba(66,133,244,.55);"></div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+        className: '',
     });
+    S.userMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(S.map);
 }
 
 function updateCircle() {
-    if (S.circle) S.circle.setMap(null);
+    if (S.circle) S.map.removeLayer(S.circle);
     const radius = S.walkMin * CFG.WALK_SPEED_MPM;
-    S.circle = new kakao.maps.Circle({
-        center: new kakao.maps.LatLng(S.userLoc.lat, S.userLoc.lng),
+    S.circle = L.circle([S.userLoc.lat, S.userLoc.lng], {
         radius,
-        strokeWeight: 2, strokeColor: '#A0785A',
-        strokeOpacity: 0.55, strokeStyle: 'dashed',
+        color: '#A0785A', weight: 2, opacity: 0.55,
+        dashArray: '6, 6',
         fillColor: '#A0785A', fillOpacity: 0.06,
-    });
-    S.circle.setMap(S.map);
+    }).addTo(S.map);
 }
 
 /* ===== 카페 검색 ===== */
@@ -211,42 +166,99 @@ function debouncedSearch() {
     _searchTimer = setTimeout(searchCafes, 400);
 }
 
-function searchCafes() {
+async function searchCafes() {
     if (!S.userLoc) return;
 
     const radius = S.walkMin * CFG.WALK_SPEED_MPM;
-    const ll     = new kakao.maps.LatLng(S.userLoc.lat, S.userLoc.lng);
-    const opts   = { location: ll, radius, sort: kakao.maps.services.SortBy.DISTANCE };
-
     setTitle('🔍 애견카페 검색 중...');
     setBody('<div class="loading"><div class="spinner"></div><p>주변 애견카페 탐색 중...</p></div>');
 
-    // 1차: '애견카페' 키워드 검색
-    S.ps.keywordSearch(CFG.SEARCH_KEYWORD, (res, st) => {
-        if (st === kakao.maps.services.Status.OK && res.length > 0) {
-            processCafes(res);
-        } else {
-            // 2차: 카페 카테고리 전체 (일반 카페 포함 데모)
-            S.ps.categorySearch(CFG.FALLBACK_CATEGORY, (res2, st2) => {
-                if (st2 === kakao.maps.services.Status.OK) processCafes(res2);
-                else showEmpty('검색 결과가 없어요', '도보 반경을 늘려보거나<br>잠시 후 다시 시도해주세요.');
-            }, opts);
-        }
-    }, opts);
+    let places = [];
+    try {
+        places = await Promise.race([
+            fetchOverpassCafes(S.userLoc.lat, S.userLoc.lng, radius),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+        ]);
+    } catch (e) {
+        console.warn('Overpass API 실패, 데모 데이터 사용:', e.message);
+    }
+
+    if (places.length < 3) {
+        places = generateDemoCafes(S.userLoc.lat, S.userLoc.lng, radius);
+    }
+
+    processCafes(places);
+}
+
+async function fetchOverpassCafes(lat, lng, radius) {
+    const query = `
+[out:json][timeout:8];
+(
+  node["amenity"="cafe"]["dog"~"yes|welcome"](around:${radius},${lat},${lng});
+  node["amenity"="cafe"]["name"~"애견|반려견|펫카페|멍멍"](around:${radius},${lat},${lng});
+  way["amenity"="cafe"]["name"~"애견|반려견|펫카페|멍멍"](around:${radius},${lat},${lng});
+);
+out center;
+`;
+    const resp = await fetch(CFG.OVERPASS_URL, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+    });
+    if (!resp.ok) throw new Error('Overpass HTTP error');
+    const data = await resp.json();
+    return data.elements
+        .filter(el => el.tags?.name)
+        .map(el => ({
+            id: String(el.id),
+            place_name: el.tags.name,
+            road_address_name: [el.tags['addr:street'], el.tags['addr:housenumber']].filter(Boolean).join(' '),
+            address_name: el.tags['addr:city'] || el.tags['addr:district'] || '',
+            x: String(el.lon ?? el.center?.lon),
+            y: String(el.lat ?? el.center?.lat),
+            phone: el.tags.phone || el.tags['contact:phone'] || '',
+        }));
+}
+
+function generateDemoCafes(lat, lng, radius) {
+    const names = [
+        '멍멍 브루잉 카페', '포레스트 펫 카페', '댕댕 하우스',
+        '반려견 쉼터 카페', '강아지 정원 카페', '해피독 커피',
+        '달달 애견 카페', '숲속 멍카페', '펫 팰리스 커피',
+        '강아지와 나', '우리 강아지 카페', '멍멍 힐링 카페',
+    ];
+    const roads = [
+        '강남대로 123', '서초대로 456', '역삼로 78', '테헤란로 210',
+        '신촌로 35', '홍대입구역 2번 출구 앞', '합정로 55', '마포대로 99',
+        '연남로 12', '망원동 34-5', '성수이로 60', '왕십리로 91',
+    ];
+    const R = radius * 0.9;
+    return names.map((name, i) => {
+        const angle = (i / names.length) * 2 * Math.PI + (i % 3) * 0.3;
+        const dist  = (0.25 + (i % 4) * 0.2) * R;
+        const dLat  = (dist / 111320) * Math.cos(angle);
+        const dLng  = (dist / (111320 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle);
+        return {
+            id: `demo_${i}`,
+            place_name: name,
+            road_address_name: roads[i],
+            address_name: '서울시',
+            x: String(lng + dLng),
+            y: String(lat + dLat),
+            phone: `02-${1000 + i * 13}-${1000 + i * 37}`,
+        };
+    });
 }
 
 function processCafes(places) {
-    // 기존 마커 제거
-    S.overlays.forEach(o => o.setMap(null));
-    S.overlays = [];
+    S.markers.forEach(m => S.map.removeLayer(m));
+    S.markers = [];
 
-    S.cafes = places.map((p, i) => {
-        const idx    = Number(p.id.slice(-2)) % DOG_POOL.length;
-        const dogInfo= DOG_POOL[idx];
+    S.cafes = places.map(p => {
+        const hash   = [...String(p.id)].reduce((a, c) => a + c.charCodeAt(0), 0);
+        const dogInfo= DOG_POOL[hash % DOG_POOL.length];
         const dist   = haversine(S.userLoc.lat, S.userLoc.lng, +p.y, +p.x);
         const walkMin= Math.max(1, Math.round(dist / CFG.WALK_SPEED_MPM));
-        const stamped= S.stamps.some(s => s.placeId === p.id);
-        return { ...p, dogInfo, dist, walkMin, stamped };
+        return { ...p, dogInfo, dist, walkMin };
     });
 
     S.cafes.sort((a, b) => a.dist - b.dist);
@@ -263,25 +275,17 @@ function addMarker(cafe) {
     const color   = stamped ? '#4CAF50' : '#6B4C3B';
     const icon    = stamped ? '✅' : (cafe.dogInfo.indoor ? '🏠' : '🌿');
 
-    const el = document.createElement('div');
-    el.style.cssText = `
-        background:${color};color:#fff;border-radius:12px;padding:5px 10px;
-        font-size:12px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.3);
-        white-space:nowrap;cursor:pointer;border:2px solid #fff;
-        transition:transform .15s;user-select:none;
-    `;
-    el.textContent = `${icon} ${cafe.walkMin}분`;
-    el.addEventListener('mouseover',  () => { el.style.transform = 'scale(1.1)'; });
-    el.addEventListener('mouseout',   () => { el.style.transform = ''; });
-    el.addEventListener('click',      () => openDetail(cafe.id));
-
-    const overlay = new kakao.maps.CustomOverlay({
-        map: S.map,
-        position: new kakao.maps.LatLng(+cafe.y, +cafe.x),
-        content: el,
-        yAnchor: 1.35, zIndex: 3,
+    const divIcon = L.divIcon({
+        html: `<div style="background:${color};color:#fff;border-radius:12px;padding:5px 10px;font-size:12px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.3);white-space:nowrap;cursor:pointer;border:2px solid #fff;">${icon} ${cafe.walkMin}분</div>`,
+        className: '',
+        iconAnchor: [20, 35],
     });
-    S.overlays.push(overlay);
+
+    const marker = L.marker([+cafe.y, +cafe.x], { icon: divIcon })
+        .addTo(S.map)
+        .on('click', () => openDetail(cafe.id));
+
+    S.markers.push(marker);
 }
 
 /* ===== 카페 목록 렌더링 ===== */
@@ -297,14 +301,6 @@ function renderList() {
     }
 
     setBody(filtered.map(buildCard).join(''));
-
-    // 이벤트 위임
-    EL.sheetBody.addEventListener('click', e => {
-        const card = e.target.closest('.cafe-card[data-id]');
-        if (card) openDetail(card.dataset.id);
-    }, { once: true });
-
-    // 다음 번 클릭을 위해 재등록 (once 덕분에 무한 중첩 없음)
     EL.sheetBody.addEventListener('click', handleCardClick);
 }
 
@@ -418,19 +414,18 @@ window.earnStamp = function(placeId) {
     const btn = $(`stampBtn_${placeId}`);
     if (btn) { btn.textContent = '✅ 방문완료!'; btn.classList.add('earned'); btn.disabled = true; }
 
-    // 마커 갱신
-    S.overlays.forEach(o => o.setMap(null));
-    S.overlays = [];
+    S.markers.forEach(m => S.map.removeLayer(m));
+    S.markers = [];
     S.cafes.forEach(addMarker);
 
     toast('🎉 스탬프를 획득했어요! 잘 다녀오셨나요?');
 };
 
 function openStampPanel() {
-    const total   = S.stamps.length;
-    const weekly  = weeklyCount();
-    const wTarget = 3;
-    const pct     = Math.min(100, (weekly / wTarget) * 100).toFixed(0);
+    const total  = S.stamps.length;
+    const weekly = weeklyCount();
+    const wTarget= 3;
+    const pct    = Math.min(100, (weekly / wTarget) * 100).toFixed(0);
 
     const grid = S.stamps.length === 0
         ? `<div class="empty-state"><div class="empty-emoji">🗺️</div>
@@ -458,7 +453,6 @@ function openStampPanel() {
             </div>
             <div class="stamp-total-count">${total} 🐾</div>
         </div>
-
         <div class="mission-card">
             <div class="mission-head">
                 <div class="mission-name">🎯 이번 주 미션</div>
@@ -468,7 +462,6 @@ function openStampPanel() {
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
             <div class="progress-text">${weekly} / ${wTarget}곳 완료</div>
         </div>
-
         <div class="stamps-section">
             <div class="stamps-section-title">📋 방문한 카페 컬렉션</div>
             ${grid}
@@ -565,9 +558,8 @@ function setupSheetDrag() {
     window.addEventListener('mousemove',  e => { if (dragging) onMove(e.clientY); });
     window.addEventListener('mouseup',    e => { if (dragging) onEnd(e.clientY); });
 
-    // 클릭으로 시트 토글
     handle.addEventListener('click', e => {
-        if (Math.abs(e.clientY - startY) > 4) return; // 드래그였으면 무시
+        if (Math.abs(e.clientY - startY) > 4) return;
         const next = { default: 'half', half: 'expanded', expanded: 'default' };
         snapSheet(next[S.sheetSnap]);
     });
