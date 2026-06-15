@@ -182,55 +182,101 @@ function debouncedSearch() {
 
 async function searchCafes() {
     if (!S.userLoc) return;
+    const radius = S.walkMin * CFG.WALK_SPEED_MPM;
     setTitle('🔍 애견카페 검색 중...');
-    setBody('<div class="loading"><div class="spinner"></div><p>주변 애견카페 탐색 중...</p></div>');
+    setBody('<div class="loading"><div class="spinner"></div><p>주변 카페 탐색 중...</p></div>');
 
-    let places = [];
+    let realPlaces = [];
     try {
-        places = await Promise.race([
-            fetchOverpassCafes(S.userLoc.lat, S.userLoc.lng, S.walkMin * CFG.WALK_SPEED_MPM),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+        realPlaces = await Promise.race([
+            fetchOverpassCafes(S.userLoc.lat, S.userLoc.lng, radius),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 9000)),
         ]);
     } catch (e) { console.warn('Overpass 실패:', e.message); }
 
-    if (places.length < 3) places = generateDemoCafes(S.userLoc.lat, S.userLoc.lng, S.walkMin * CFG.WALK_SPEED_MPM);
+    let places;
+    if (realPlaces.length >= 5) {
+        places = realPlaces;
+        EL.sheetBadge.textContent = `도보 ${S.walkMin}분 · 실제 데이터`;
+    } else if (realPlaces.length > 0) {
+        // 실제 데이터 + 데모 보충
+        const demo = generateDemoCafes(S.userLoc.lat, S.userLoc.lng, radius);
+        places = [...realPlaces, ...demo].slice(0, 20);
+        EL.sheetBadge.textContent = `도보 ${S.walkMin}분 이내`;
+    } else {
+        places = generateDemoCafes(S.userLoc.lat, S.userLoc.lng, radius);
+        EL.sheetBadge.textContent = `도보 ${S.walkMin}분 이내`;
+    }
     processCafes(places);
 }
 
 async function fetchOverpassCafes(lat, lng, radius) {
-    const query = `[out:json][timeout:8];(
-      node["amenity"="cafe"]["dog"~"yes|welcome"](around:${radius},${lat},${lng});
-      node["amenity"="cafe"]["name"~"애견|반려견|펫카페|멍멍"](around:${radius},${lat},${lng});
-      way["amenity"="cafe"]["name"~"애견|반려견|펫카페|멍멍"](around:${radius},${lat},${lng});
-    );out center;`;
-    const resp = await fetch(CFG.OVERPASS_URL, { method: 'POST', body: 'data=' + encodeURIComponent(query) });
-    if (!resp.ok) throw new Error('HTTP error');
+    // 애견 특화 태그 + 이름 있는 모든 카페 검색 (반경 1.5x 확장으로 충분한 결과 확보)
+    const r = Math.max(radius * 1.5, 800);
+    const query = `[out:json][timeout:9];
+(
+  node["amenity"="cafe"]["name"](around:${r},${lat},${lng});
+  way["amenity"="cafe"]["name"](around:${r},${lat},${lng});
+  node["amenity"="cafe"]["dog"~"yes|welcome"](around:${r},${lat},${lng});
+  node["shop"="pet"]["name"](around:${r},${lat},${lng});
+);
+out center 30;`;
+    const resp = await fetch(CFG.OVERPASS_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
-    return data.elements.filter(el => el.tags?.name).map(el => ({
-        id: String(el.id),
-        place_name: el.tags.name,
-        road_address_name: [el.tags['addr:street'], el.tags['addr:housenumber']].filter(Boolean).join(' '),
-        address_name: el.tags['addr:city'] || '',
-        x: String(el.lon ?? el.center?.lon),
-        y: String(el.lat ?? el.center?.lat),
-        phone: el.tags.phone || '',
-    }));
+    return data.elements
+        .filter(el => el.tags?.name)
+        .filter(el => {
+            const lon = el.lon ?? el.center?.lon;
+            const lat2 = el.lat ?? el.center?.lat;
+            return lon != null && lat2 != null;
+        })
+        .map(el => ({
+            id: String(el.id),
+            place_name: el.tags.name,
+            road_address_name: [el.tags['addr:street'], el.tags['addr:housenumber']].filter(Boolean).join(' '),
+            address_name: el.tags['addr:city'] || el.tags['addr:district'] || '',
+            x: String(el.lon ?? el.center?.lon),
+            y: String(el.lat ?? el.center?.lat),
+            phone: el.tags.phone || el.tags['contact:phone'] || '',
+            isDogFriendly: !!(el.tags.dog === 'yes' || el.tags.dog === 'welcome'),
+        }));
 }
 
 function generateDemoCafes(lat, lng, radius) {
-    const names = ['멍멍 브루잉 카페','포레스트 펫 카페','댕댕 하우스','반려견 쉼터 카페','강아지 정원 카페','해피독 커피','달달 애견 카페','숲속 멍카페','펫 팰리스 커피','강아지와 나','우리 강아지 카페','멍멍 힐링 카페'];
-    const roads = ['강남대로 123','서초대로 456','역삼로 78','테헤란로 210','신촌로 35','홍대입구역 2번 출구 앞','합정로 55','마포대로 99','연남로 12','망원동 34-5','성수이로 60','왕십리로 91'];
+    const names = [
+        '멍멍 브루잉 카페','포레스트 펫 카페','댕댕 하우스',
+        '반려견 쉼터 카페','강아지 정원 카페','해피독 커피',
+        '달달 애견 카페','숲속 멍카페','펫 팰리스 커피',
+        '강아지와 나','우리 강아지 카페','멍멍 힐링 카페',
+        '도그 카페 봄','퍼피 가든','반려 테라스 카페',
+        '댕댕이 놀이터','애견 쉼터','멍스타 카페',
+        '도그 팰리스','해피 포우 카페',
+    ];
+    const roads = [
+        '강남대로 123','서초대로 456','역삼로 78','테헤란로 210',
+        '신촌로 35','홍대입구역 2번 출구 앞','합정로 55','마포대로 99',
+        '연남로 12','망원동 34-5','성수이로 60','왕십리로 91',
+        '용산대로 77','이태원로 44','경리단길 22','한남대로 88',
+        '삼청로 15','인사동길 33','북촌로 19','창덕궁길 7',
+    ];
+    // 황금각도(137.5°) 나선형 분포 → 겹침 없이 넓게 퍼짐
+    const PHI = 137.508 * Math.PI / 180;
     return names.map((name, i) => {
-        const angle = (i / names.length) * 2 * Math.PI + (i % 3) * 0.3;
-        const dist  = (0.25 + (i % 4) * 0.2) * radius * 0.9;
+        const angle = i * PHI;
+        const dist  = radius * 0.15 + (radius * 0.8 * Math.sqrt(i / names.length));
         return {
             id: `demo_${i}`,
             place_name: name,
             road_address_name: roads[i],
-            address_name: '서울시',
+            address_name: '주변',
             x: String(lng + (dist / (111320 * Math.cos(lat * Math.PI / 180))) * Math.sin(angle)),
             y: String(lat + (dist / 111320) * Math.cos(angle)),
-            phone: `02-${1000 + i * 13}-${1000 + i * 37}`,
+            phone: i % 3 === 0 ? `02-${1000 + i * 13}-${1000 + i * 37}` : '',
         };
     });
 }
@@ -247,7 +293,6 @@ function processCafes(places) {
     S.cafes.sort((a, b) => a.dist - b.dist);
     S.cafes.forEach(addMarker);
     setTitle(`🐾 ${S.cafes.length}곳 찾았어요!`);
-    EL.sheetBadge.textContent = `도보 ${S.walkMin}분 이내`;
     renderList();
     snapSheet('half');
 }
