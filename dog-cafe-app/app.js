@@ -126,23 +126,43 @@ function locateUser() {
 }
 
 function useDefaultLoc(msg) {
-    setTitle('⚠️ ' + msg + ' (서울 데모)');
+    setTitle('⚠️ ' + msg);
     S.userLoc = { lat: CFG.DEFAULT_LAT, lng: CFG.DEFAULT_LNG };
-    S.map.setView([CFG.DEFAULT_LAT, CFG.DEFAULT_LNG], 15);
+    S.map.setView([CFG.DEFAULT_LAT, CFG.DEFAULT_LNG], 14);
     drawUserDot(CFG.DEFAULT_LAT, CFG.DEFAULT_LNG);
     updateCircle();
     searchCafes();
+    setTimeout(() => toast('📍 파란 핀을 드래그해서 내 위치를 설정해보세요!', 4500), 1000);
 }
 
 function drawUserDot(lat, lng) {
     if (S.userMarker) S.map.removeLayer(S.userMarker);
-    S.userMarker = L.marker([lat, lng], {
-        icon: L.divIcon({
-            html: '<div style="width:18px;height:18px;border-radius:50%;background:#4285F4;border:3px solid #fff;box-shadow:0 2px 8px rgba(66,133,244,.55);"></div>',
-            iconSize: [18, 18], iconAnchor: [9, 9], className: '',
-        }),
-        zIndexOffset: 1000,
-    }).addTo(S.map);
+    const icon = L.divIcon({
+        html: `<div class="user-pin">
+            <div class="user-pin-pulse"></div>
+            <div class="user-pin-dot"></div>
+            <div class="user-pin-label">드래그</div>
+        </div>`,
+        iconSize: [32, 44],
+        iconAnchor: [16, 16],
+        className: '',
+    });
+    S.userMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 1000 })
+        .addTo(S.map)
+        .on('dragstart', () => {
+            setTitle('📍 위치를 설정하는 중...');
+            EL.sheetBadge.textContent = '';
+        })
+        .on('drag', e => {
+            const pos = e.target.getLatLng();
+            S.userLoc = { lat: pos.lat, lng: pos.lng };
+            updateCircle();
+        })
+        .on('dragend', () => {
+            updateCircle();
+            searchCafes();
+            toast('📍 이 위치에서 카페를 검색해요!');
+        });
 }
 
 function updateCircle() {
